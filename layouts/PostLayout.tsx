@@ -32,11 +32,18 @@ interface LayoutProps {
   authorDetails: CoreContent<Authors>[]
   next?: { path: string; title: string }
   prev?: { path: string; title: string }
-  children: ReactNode,
+  children: ReactNode
   toc?: TocEntry[]
 }
 
-export default function PostLayout({ content, authorDetails, next, prev, children, toc }: LayoutProps) {
+export default function PostLayout({
+  content,
+  authorDetails,
+  next,
+  prev,
+  children,
+  toc,
+}: LayoutProps) {
   const { filePath, path, slug, date, title, tags } = content
   const basePath = path.split('/')[0]
 
@@ -120,29 +127,34 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
             </div>
             <footer>
               <div className="divide-gray-200 text-sm leading-5 font-medium xl:col-start-1 xl:row-start-2 xl:divide-y dark:divide-gray-700">
-                {toc && (<div className="py-4 xl:py-8">
-                  <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
+                {toc && (
+                  <div className="py-4 xl:py-8">
+                    <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
                       Table of Contents
-                  </h2>
-                  <nav aria-label="Table of contents" className="mt-4">
-                    <ul className="space-y-2">
-                      {toc.map((heading) => {
-                        // Use Tailwind's default pl-* classes for indentation
+                    </h2>
+                    <nav aria-label="Table of contents" className="mt-4">
+                      <ul className="space-y-2">
+                        {toc.map((heading) => {
+                          // Use Tailwind's default pl-* classes for indentation
 
-                        return (
-                          <li key={heading.url} className={`pl-${(heading.depth - 1) * 4} text-gray-700 dark:text-gray-300`}>
-                            <a
-                              href={heading.url}
-                              className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
+                          return (
+                            <li
+                              key={heading.url}
+                              className={`pl-${(heading.depth - 1) * 4} text-gray-700 dark:text-gray-300`}
                             >
-                              {heading.value}
-                            </a>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </nav> 
-                </div>)}
+                              <a
+                                href={heading.url}
+                                className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
+                              >
+                                {heading.value}
+                              </a>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </nav>
+                  </div>
+                )}
                 {tags && (
                   <div className="py-4 xl:py-8">
                     <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">

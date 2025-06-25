@@ -178,7 +178,7 @@ export default makeSource({
       [rehypeCitation, { path: path.join(root, 'data') }],
       [rehypePrismPlus, { defaultLanguage: 'js', ignoreMissing: true }],
       rehypePresetMinify,
-      [rehypeExtractToc, {headings: ['h2', 'h3', 'h4']}],
+      [rehypeExtractToc, { headings: ['h2', 'h3', 'h4'] }],
     ],
   },
   onSuccess: async (importData) => {

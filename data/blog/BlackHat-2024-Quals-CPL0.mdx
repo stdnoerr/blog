@@ -5,12 +5,16 @@ date: 2023-11-26 00:00
 tags: [writeup, kernel, qemu]
 summary: Writeup for CPL0 in BlackHat 2024 Qualifiers.
 ---
+
 I played BlackHat 2024 Qualifiers with [AirOverflow](https://team.airoverflow.com/). I didn't get much time to play and only managed to solve CPL0.
 The challenge provided a qemu patch and docker container files. I assumed that it was a kernel challenge but it turned out to be very different. Here's how I solved it: -
 
 # Analysis
+
 ## Patch file
+
 Here's the Qemu patch file: -
+
 ```diff
 diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
 index 95bad55bf4..309e540957 100644
@@ -22,7 +26,7 @@ index 95bad55bf4..309e540957 100644
      static inline void gen_helper_##NAME(__VA_ARGS__) \
 -    { qemu_build_not_reached(); }
 +    { /* qemu_build_not_reached(); */ }
- 
+
  #ifdef CONFIG_USER_ONLY
  STUB_HELPER(clgi, TCGv_env env)
 @@ -1386,11 +1386,7 @@ static void gen_exception_gpf(DisasContext *s)
@@ -36,20 +40,24 @@ index 95bad55bf4..309e540957 100644
 -    return false;
 +    return true;
  }
- 
+
  /* XXX: add faster immediate case */
 ```
 
 The patch file modifies a function and a macro. The macro is simply a wrapper for labeling unreachable regions in the code. Our interest lies in the function `check_cpl0`. Whatever the function was checking has been patched to always return true.
 
 ## What is CPL?
+
 For those of you who don't know, Qemu is a CPU emulator. It helps translates instruction of one guest CPU type on another host CPU. Guest and host CPUs can be same. This helps develops test programs that handle low level stuff without having to debug everything on their physical CPU, which is an extremely frustrating task.
 
 If you track the `CPL` macro in qemu code, it shows up to be the following: -
+
 ```c
 #define CPL(S)    ((S)->cpl)
 ```
+
 Here `S` or `s` in the function is a pointer of type `struct DisasContext`. The `cpl` member of this struct has the following comment: -
+
 ```c
 typedef struct DisasContext {
     DisasContextBase base;
@@ -73,13 +81,16 @@ typedef struct DisasContext {
 #endif
 [truncated]
 ```
+
 So now we know that `CPL` is actually `code privilege level`. But what does it mean?<br/>
 If you look it up in the Intel docs, you will find that code on x86 CPUs have a ring model of privileges. These privileges are also called code privileges. It has privilege levels for `0` to `3` (some details are avoided for brevity). `0` Privilege level is where the Kernel executes and `3` privilege level is what all user programs are assigned. This helps CPUs deny access to sensitive things to user programs and maintains privilege separation.
 
 The patch modified the CPL check such that whenever a privileged instruction is encountered in userspace code, it treats it as though it came from kernel code. Hence any user program can do kernel actions and execute privileged instructions.
 
 ## What Privileged instructions are there?
+
 If you look up in the Intel's Software Developer Manual for privileged instructions, you will find the following section:
+
 ```
 6.9 PRIVILEGED INSTRUCTIONS
 Some of the system instructions (called “privileged instructions”) are protected from use by application programs.
@@ -111,10 +122,13 @@ respectively, to be executed at any CPL.
 This gives us a list of privileged instructions and their short descriptions.
 
 # Exploitation
+
 ## What is the Objective?
+
 Since our code was executing as an unprivileged user, it was obvious that we had to escalate privileges. But we had to do it using some privileged instruction instead of exploiting the kernel.
 
 ## Interrupt Descriptor Table
+
 I decided to overwrite the interrupt descriptor table using the `LIDT` instruction. The Interrupt Descriptor table holds entries for handling interrupts.
 Interrupts are the equivalent of "events" in an Operating System. A common interrupt is `int 0x80` that is used to serve syscalls in Linux.
 
@@ -125,10 +139,12 @@ By searching for ways to escalate privileges when we have control of IDT reveale
 The first writeup explains the IDT entry structure in detail and the second one provides details on how to escalate privileges when you can execute code in CPL0.
 
 ## Exploit
+
 I first made C structs for IDT and IDT entry, then I first read the IDT using `SIDT` to later recover the IDT to a stable state, made a fake IDT that will redirect all interrupts to my handle, and performed an interrupt to execute the handler. The handler does privilege escalation based on hxp writeup.<br/>
 The privilege escalation is done by overwriting the `struct cred` of the current process with `init_task`. The struct is located by access `current` (in linux kernel language) that is acquired by reading the `gs` segment register. To access the kernel `gs`, `swapgs` is executed and `init_task` is located by getting a kernel leak via reading `MSR_LSTAR` which holds the handler for `syscall` and `sysenter` instructions. `cli` and `sti` are used to disable and enable interrupts respectively and `LIDT` is used to fix IDT so the program doesn't crash after returning. To return `iretq` is used because we are in an interrupt context.
 
 ### Final exploit
+
 ```c
 #include <fcntl.h>
 #include <stdio.h>
@@ -162,14 +178,14 @@ int create_fake_idt(struct IDT* out_idt, void * handler){
 
     if (idt == MAP_FAILED)
         return -1;
-    
+
     IDTEntry entry = {
-        .flags = INTERRUPT_FLAGS, 
-        .ss = INTERRUPT_SS, 
-        .hidword = (uint64_t) handler >> 32, 
-        .hiword = ((uint64_t) handler & 0xffff0000) >> 16, 
+        .flags = INTERRUPT_FLAGS,
+        .ss = INTERRUPT_SS,
+        .hidword = (uint64_t) handler >> 32,
+        .hiword = ((uint64_t) handler & 0xffff0000) >> 16,
         .loword = (uint64_t) handler & 0xffff};
-    
+
     for (int i = 0; i < TOTAL_INTERRUPTS; i++){
         idt[i] = entry;
     }
@@ -195,6 +211,7 @@ int main(){
     return 0;
 }
 ```
+
 ```nasm
 #include <linux/mman.h>
 #include <sys/syscall.h>

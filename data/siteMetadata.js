@@ -3,7 +3,8 @@ const siteMetadata = {
   title: 'stdnoerr',
   author: 'stdnoerr',
   headerTitle: 'stdnoerr',
-  description: 'A place to put my thoughts and ideas in addition to writeups of some CTF challenges',
+  description:
+    'A place to put my thoughts and ideas in addition to writeups of some CTF challenges',
   language: 'en-us',
   theme: 'system', // system, dark or light
   siteUrl: 'https://tailwind-nextjs-starter-blog.vercel.app',
