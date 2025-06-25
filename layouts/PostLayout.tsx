@@ -7,6 +7,7 @@ import PageTitle from '@/components/PageTitle'
 import SectionContainer from '@/components/SectionContainer'
 import Image from '@/components/Image'
 import Tag from '@/components/Tag'
+import Toc from '@/components/Toc'
 import siteMetadata from '@/data/siteMetadata'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
 
@@ -107,6 +108,23 @@ export default function PostLayout({
                 </ul>
               </dd>
             </dl>
+
+            {/* ToC for mobile/tablet: show above content, hide on xl+ */}
+            {toc && (
+              <div className="py-4 xl:hidden">
+                <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
+                  Table of Contents
+                </h2>
+                <nav aria-label="Table of contents" className="mt-4">
+                  <ul className="space-y-2">
+                    {toc.map((heading) => (
+                      <Toc key={heading.url} {...heading} />
+                    ))}
+                  </ul>
+                </nav>
+              </div>
+            )}
+
             <div className="divide-y divide-gray-200 xl:col-span-3 xl:row-span-2 xl:pb-0 dark:divide-gray-700">
               <div className="prose dark:prose-invert max-w-none pt-10 pb-8">{children}</div>
               {/* <div className="pt-6 pb-6 text-sm text-gray-700 dark:text-gray-300">
@@ -125,38 +143,79 @@ export default function PostLayout({
                 </div>
               )}
             </div>
-            <footer>
-              <div className="divide-gray-200 text-sm leading-5 font-medium xl:col-start-1 xl:row-start-2 xl:divide-y dark:divide-gray-700">
-                {toc && (
-                  <div className="py-4 xl:py-8">
-                    <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
-                      Table of Contents
-                    </h2>
-                    <nav aria-label="Table of contents" className="mt-4">
-                      <ul className="space-y-2">
-                        {toc.map((heading) => {
-                          // Use Tailwind's default pl-* classes for indentation
 
-                          return (
-                            <li
-                              key={heading.url}
-                              className={`pl-${(heading.depth - 1) * 4} text-gray-700 dark:text-gray-300`}
-                            >
-                              <a
-                                href={heading.url}
-                                className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
-                              >
-                                {heading.value}
-                              </a>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </nav>
+            {/* ToC and footer for xl+ screens: left sidebar */}
+            {toc && (
+              <div className="hidden xl:col-start-1 xl:row-start-2 xl:flex xl:flex-col xl:py-8">
+                <div>
+                  <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
+                    Table of Contents
+                  </h2>
+                  <nav aria-label="Table of contents" className="mt-4">
+                    <ul className="space-y-2">
+                      {toc.map((heading) => (
+                        <Toc key={heading.url} {...heading} />
+                      ))}
+                    </ul>
+                  </nav>
+                </div>
+                {/* Divider between ToC and tags */}
+                <hr className="my-6 border-gray-200 dark:border-gray-700" />
+                <div className="mt-2 divide-gray-200 text-sm leading-5 font-medium dark:divide-gray-700">
+                  {tags && (
+                    <div className="py-4">
+                      <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
+                        Tags
+                      </h2>
+                      <div className="flex flex-wrap">
+                        {tags.map((tag) => (
+                          <Tag key={tag} text={tag} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(next || prev) && (
+                    <div className="space-y-8 py-4">
+                      {prev && prev.path && (
+                        <div>
+                          <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
+                            Previous Article
+                          </h2>
+                          <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
+                            <Link href={`/${prev.path}`}>{prev.title}</Link>
+                          </div>
+                        </div>
+                      )}
+                      {next && next.path && (
+                        <div>
+                          <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
+                            Next Article
+                          </h2>
+                          <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
+                            <Link href={`/${next.path}`}>{next.title}</Link>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="pt-4">
+                    <Link
+                      href={`/${basePath}`}
+                      className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
+                      aria-label="Back to the blog"
+                    >
+                      &larr; Back to the blog
+                    </Link>
                   </div>
-                )}
+                </div>
+              </div>
+            )}
+
+            {/* Footer for mobile/tablet: bottom */}
+            <footer className="block xl:hidden">
+              <div className="divide-gray-200 text-sm leading-5 font-medium dark:divide-gray-700">
                 {tags && (
-                  <div className="py-4 xl:py-8">
+                  <div className="py-4">
                     <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
                       Tags
                     </h2>
@@ -168,7 +227,7 @@ export default function PostLayout({
                   </div>
                 )}
                 {(next || prev) && (
-                  <div className="flex justify-between py-4 xl:block xl:space-y-8 xl:py-8">
+                  <div className="flex justify-between py-4">
                     {prev && prev.path && (
                       <div>
                         <h2 className="text-xs tracking-wide text-gray-500 uppercase dark:text-gray-400">
@@ -191,15 +250,15 @@ export default function PostLayout({
                     )}
                   </div>
                 )}
-              </div>
-              <div className="pt-4 xl:pt-8">
-                <Link
-                  href={`/${basePath}`}
-                  className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
-                  aria-label="Back to the blog"
-                >
-                  &larr; Back to the blog
-                </Link>
+                <div className="pt-4">
+                  <Link
+                    href={`/${basePath}`}
+                    className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
+                    aria-label="Back to the blog"
+                  >
+                    &larr; Back to the blog
+                  </Link>
+                </div>
               </div>
             </footer>
           </div>
