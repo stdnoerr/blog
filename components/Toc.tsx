@@ -12,7 +12,7 @@ const Toc = (entry: TocEntry) => {
       <Link
         href={`#${slug(entry.url)}`}
         className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 block"
-        style={{ paddingLeft: `${(entry.depth - 1) * 1.5}rem` }}
+        style={{ paddingLeft: `${(entry.depth - 1)}rem` }}
       >
         {entry.value}
       </Link>
